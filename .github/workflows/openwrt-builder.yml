@@ -165,10 +165,6 @@ jobs:
         done
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Check space usage
-      if: (!cancelled())
-      run: df -hT
-
     - name: Upload bin directory
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
