@@ -43,9 +43,10 @@ o:value("0", translate("read only"))
 o:value("1", translate("read & write"))
 o.rmempty=true
 
+if nixio.fs.access("/etc/init.d/minidlna") then
 o = s:option(Value, "minidlna_dir", translate("minidlna directory"))
 o.rmempty=ture
-
+end
 o = s:option(Value, "samba_rw_dir", translate("Samba RW directory"))
 --o:depends("samba_rw", "0")
 o.rmempty=ture

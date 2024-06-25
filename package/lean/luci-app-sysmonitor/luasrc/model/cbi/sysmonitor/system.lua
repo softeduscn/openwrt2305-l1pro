@@ -16,9 +16,6 @@ s.anonymous = true
 --o=s:option(Flag,"enable", translate("Enable"))
 --o.rmempty=false
 
-o=s:option(Flag,"nextvpn", translate("Auto switch VPN"))
-o.rmempty=false
-
 --[[
 if nixio.fs.access("/etc/init.d/ddns") then
 o=s:option(Flag,"ddns", translate("DDNS Enable"))

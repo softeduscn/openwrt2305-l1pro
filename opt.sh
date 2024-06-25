@@ -10,6 +10,7 @@
 
 mkdir opt
 git clone https://github.com/unifreq/openwrt_packit opt/openwrt_packit
+#kpath='https://github.com/ophub/kernel/releases/download/kernel_flippy/'
 kpath='https://github.com/breakings/OpenWrt/releases/download/kernel_stable/'
 kout='opt/openwrt_packit'
 kversion='5.15.158'
@@ -22,9 +23,7 @@ firmware="mk_rk3328_l1pro.sh"
 file1='opt/openwrt_packit/make.env'
 file2='opt/openwrt_packit/'$firmware
 file3='opt/openwrt_packit/public_funcs'
-#file4='opt/openwrt_packit/files/openwrt-update-rockchip'
-#sed -i '/rootflags=compress/a\ramdisk_addr_r=0x06000000' $file4
-#sed -i '/rootflags=compress/a\kernel_addr_r=0x02000000' $file4
+file4='opt/openwrt_packit/files/openwrt-update-rockchip'
 kernel=$(ls opt/*/k*/boot*|cut -d'-' -f2-4|cut -d'.' -f1-3)
 kernel='KERNEL_VERSION="'$kernel'"'
 sed -i 'N;10i'$kernel $file1
@@ -48,3 +47,8 @@ sed -i s/'adjust_ntfs_config'/'#adjust_ntfs_config'/ $file2
 sed -i s/'adjust_mosdns_config'/'#adjust_mosdns_config'/ $file2
 sed -i s/'patch_admin_status_index_html'/'#patch_admin_status_index_html'/ $file2
 sed -i s/'openwrt-armvirt-64-default-rootfs.tar.gz'/'openwrt-armsr-armv8-generic-rootfs.tar.gz'/ $file3
+m=$(sed -n '/crontabs/=' $file4)
+coremark='sed -i '$m'd '$file4
+$coremark
+$coremark
+$coremark
