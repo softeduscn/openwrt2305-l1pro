@@ -27,8 +27,8 @@ config sysmonitor 'sysmonitor'
 	option ftp '1'
 	option ftp_rw '0'
 	option webdav_rw '0'
-	option minidlna '0'
-	option minidlna '0'
+	option minidlna '1'
+	option minidlna '1'
 
 config host_list
 	option hostname 'MAST'
