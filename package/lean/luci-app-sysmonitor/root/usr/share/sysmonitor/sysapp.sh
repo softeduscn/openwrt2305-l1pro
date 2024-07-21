@@ -446,6 +446,28 @@ users=$(cat $file|grep peer|wc -l)
 echo $users
 }
 
+test_url() {
+	local url=$1
+	local try=1
+	[ -n "$2" ] && try=$2
+	local timeout=2
+	[ -n "$3" ] && timeout=$3
+	local extra_params=$4
+	curl --help all | grep "\-\-retry-all-errors" > /dev/null
+	[ $? == 0 ] && extra_params="--retry-all-errors ${extra_params}"
+	status=$(/usr/bin/curl -I -o /dev/null -skL $extra_params --connect-timeout ${timeout} --retry ${try} -w %{http_code} "$url")
+	case "$status" in
+		404|204|\
+		200)
+			status=200
+		;;
+		*)
+			status=0
+		;;
+	esac
+	echo $status
+}
+
 curl_url() {
 	for i in $( seq 1 2 ); do
 		result=$(curl -s --connect-timeout 1 $1|grep google|wc -l)
@@ -460,7 +482,8 @@ getvpn() {
 	if [ "$vpn" == 'NULL' ]; then
 		status='0'
 	else	
-		status=$(ping_url 'www.google.com')
+		#status=$(test_url "https://www.google.com/generate_204")
+		status=$(ping_url www.google.com)
 		[ "$status" != 0 ] && status='1'
 	fi
 	if [ "$status" == 0 ]; then
