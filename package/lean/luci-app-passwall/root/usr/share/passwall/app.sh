@@ -217,30 +217,6 @@ check_depends() {
 	fi
 }
 
-check_ver() {
-	local version1="$1"
-	local version2="$2"
-	local i v1 v1_1 v1_2 v1_3 v2 v2_1 v2_2 v2_3
-	IFS='.'; set -- $version1; v1_1=${1:-0}; v1_2=${2:-0}; v1_3=${3:-0}
-	IFS='.'; set -- $version2; v2_1=${1:-0}; v2_2=${2:-0}; v2_3=${3:-0}
-	IFS=
-	for i in 1 2 3; do
-		eval v1=\$v1_$i
-		eval v2=\$v2_$i
-		if [ "$v1" -gt "$v2" ]; then
-			# $1 大于 $2
-			echo 0
-			return
-		elif [ "$v1" -lt "$v2" ]; then
-			# $1 小于 $2
-			echo 1
-			return
-		fi
-	done
-	# $1 等于 $2
-	echo 255
-}
-
 get_new_port() {
 	port=$1
 	[ "$port" == "auto" ] && port=2082
@@ -639,10 +615,6 @@ run_chinadns_ng() {
 	
 	([ -z "${_default_tag}" ] || [ "${_default_tag}" = "smart" ] || [ "${_default_tag}" = "none_noip" ]) && _default_tag="none"
 	echo "default-tag ${_default_tag}" >> ${_CONF_FILE}
-
-	[ "${_flag}" = "default" ] && [ "${_default_tag}" = "none" ] && {
-		echo "verdict-cache 4096" >> ${_CONF_FILE}
-	}
 
 	ln_run "$(first_type chinadns-ng)" chinadns-ng "${_LOG_FILE}" -C ${_CONF_FILE}
 }
@@ -1322,41 +1294,31 @@ stop_crontab() {
 start_dns() {
 	echolog "DNS域名解析："
 
-	local direct_dns_mode=$(config_t_get global direct_dns_mode "auto")
-	case "$direct_dns_mode" in
-		udp)
-			LOCAL_DNS=$(config_t_get global direct_dns_udp 223.5.5.5 | sed 's/:/#/g')
-		;;
-		tcp)
-			LOCAL_DNS="127.0.0.1#${dns_listen_port}"
-			dns_listen_port=$(expr $dns_listen_port + 1)
-			local DIRECT_DNS=$(config_t_get global direct_dns_tcp 223.5.5.5 | sed 's/:/#/g')
-			ln_run "$(first_type dns2tcp)" dns2tcp "/dev/null" -L "${LOCAL_DNS}" -R "$(get_first_dns DIRECT_DNS 53)" -v
-			echolog "  - dns2tcp(${LOCAL_DNS}) -> tcp://$(get_first_dns DIRECT_DNS 53 | sed 's/#/:/g')"
-			echolog "  * 请确保上游直连 DNS 支持 TCP 查询。"
-		;;
-		dot)
-			if [ "$(chinadns-ng -V | grep -i wolfssl)" != "nil" ]; then
-				LOCAL_DNS="127.0.0.1#${dns_listen_port}"
-				local cdns_listen_port=${dns_listen_port}
-				dns_listen_port=$(expr $dns_listen_port + 1)
-				local DIRECT_DNS=$(config_t_get global direct_dns_dot "tls://dot.pub@1.12.12.12")
-				ln_run "$(first_type chinadns-ng)" chinadns-ng "/dev/null" -b 127.0.0.1 -l ${cdns_listen_port} -c ${DIRECT_DNS} -d chn
-				echolog "  - ChinaDNS-NG(${LOCAL_DNS}) -> ${DIRECT_DNS}"
-				echolog "  * 请确保上游直连 DNS 支持 DoT 查询。"
-			else
-				echolog "  - 你的ChinaDNS-NG版本不支持DoT，直连DNS将使用默认UDP地址。"
-			fi
-		;;
-		auto)
-			#Automatic logic is already done by default
-			:
-		;;
-	esac
-
 	TUN_DNS="127.0.0.1#${dns_listen_port}"
 	[ "${resolve_dns}" == "1" ] && TUN_DNS="127.0.0.1#${resolve_dns_port}"
 
+	[ "${DNS_SHUNT}" = "smartdns" ] && {
+		rm -rf $TMP_PATH2/dnsmasq_default*
+		local group_domestic=$(config_t_get global group_domestic)
+		local smartdns_remote_dns=$(config_t_get global smartdns_remote_dns)
+		if [ -n "${smartdns_remote_dns}" -a "${smartdns_remote_dns}" != "nil" ]; then
+			smartdns_remote_dns=$(echo ${smartdns_remote_dns} | tr -s ' ' '|')
+		else
+			smartdns_remote_dns="tcp://1.1.1.1"
+		fi
+		local smartdns_exclude_default_group=$(config_t_get global smartdns_exclude_default_group 0)
+		lua $APP_PATH/helper_smartdns_add.lua -FLAG "default" -SMARTDNS_CONF "/tmp/etc/smartdns/$CONFIG.conf" \
+			-LOCAL_GROUP ${group_domestic:-nil} -REMOTE_GROUP "passwall_proxy" -REMOTE_PROXY_SERVER ${TCP_SOCKS_server} -REMOTE_EXCLUDE "${smartdns_exclude_default_group}" \
+			-TUN_DNS ${smartdns_remote_dns} \
+			-USE_DIRECT_LIST "${USE_DIRECT_LIST}" -USE_PROXY_LIST "${USE_PROXY_LIST}" -USE_BLOCK_LIST "${USE_BLOCK_LIST}" -USE_GFW_LIST "${USE_GFW_LIST}" -CHN_LIST "${CHN_LIST}" \
+			-TCP_NODE ${TCP_NODE} -DEFAULT_PROXY_MODE "${TCP_PROXY_MODE}" -NO_PROXY_IPV6 ${FILTER_PROXY_IPV6:-0} -NFTFLAG ${nftflag:-0} \
+			-NO_LOGIC_LOG ${NO_LOGIC_LOG:-0}
+		source $APP_PATH/helper_smartdns.sh restart
+		echolog "  - 域名解析：使用SmartDNS，请确保配置正常。"
+		return
+	}
+
+	rm -rf $TMP_PATH2/smartdns_default*
 	case "$DNS_MODE" in
 	dns2socks)
 		local dns2socks_socks_server=$(echo $(config_t_get global socks_server 127.0.0.1:1080) | sed "s/#/:/g")
@@ -1457,10 +1419,10 @@ start_dns() {
 	[ "${use_udp_node_resolve_dns}" = "1" ] && echolog "  * 请确认上游 DNS 支持 UDP 查询并已使用 UDP 节点，如上游 DNS 非直连地址，确保 UDP 代理打开，并且已经正确转发！"
 
 	[ "$DNS_SHUNT" = "chinadns-ng" ] && [ -n "$(first_type chinadns-ng)" ] && {
-		chinadns_ng_min=2024.04.13
-		chinadns_ng_now=$(chinadns-ng -V | grep -i "ChinaDNS-NG " | awk '{print $2}')
-		if [ $(check_ver "$chinadns_ng_now" "$chinadns_ng_min") = 1 ]; then
-			echolog "  * 注意：当前 ChinaDNS-NG 版本为[ $chinadns_ng_now ]，请更新到[ $chinadns_ng_min ]或以上版本，否则 DNS 有可能无法正常工作！"
+		chinadns_ng_min=2024-04-13
+		chinadns_ng_now=$(chinadns-ng -V | grep -i "ChinaDNS-NG " | awk '{print $2}' | awk 'BEGIN{FS=".";OFS="-"};{print $1,$2,$3}')
+		if [ $(date -d "$chinadns_ng_now" +%s) -lt $(date -d "$chinadns_ng_min" +%s) ]; then
+			echolog "  * 注意：当前 ChinaDNS-NG 版本为[ ${chinadns_ng_now//-/.} ]，请更新到[ ${chinadns_ng_min//-/.} ]或以上版本，否则 DNS 有可能无法正常工作！"
 		fi
 		
 		local china_ng_local_dns=$(echo -n $(echo "${LOCAL_DNS}" | sed "s/,/\n/g" | head -n2  | awk -v prefix="udp://" '{ for (i=1; i<=NF; i++) print prefix $i }') | tr " " ",")
@@ -1634,10 +1596,10 @@ acl_app() {
 							}
 
 							[ "$dns_shunt" = "chinadns-ng" ] && [ -n "$(first_type chinadns-ng)" ] && {
-								chinadns_ng_min=2024.04.13
-								chinadns_ng_now=$(chinadns-ng -V | grep -i "ChinaDNS-NG " | awk '{print $2}')
-								if [ $(check_ver "$chinadns_ng_now" "$chinadns_ng_min") = 1 ]; then
-									echolog "  * 注意：当前 ChinaDNS-NG 版本为[ $chinadns_ng_now ]，请更新到[ $chinadns_ng_min ]或以上版本，否则 DNS 有可能无法正常工作！"
+								chinadns_ng_min=2024-04-13
+								chinadns_ng_now=$(chinadns-ng -V | grep -i "ChinaDNS-NG " | awk '{print $2}' | awk 'BEGIN{FS=".";OFS="-"};{print $1,$2,$3}')
+								if [ $(date -d "$chinadns_ng_now" +%s) -lt $(date -d "$chinadns_ng_min" +%s) ]; then
+									echolog "  * 注意：当前 ChinaDNS-NG 版本为[ ${chinadns_ng_now//-/.} ]，请更新到[ ${chinadns_ng_min//-/.} ]或以上版本，否则 DNS 有可能无法正常工作！"
 								fi
 
 								[ "$filter_proxy_ipv6" = "1" ] && dnsmasq_filter_proxy_ipv6=0
@@ -1804,6 +1766,10 @@ acl_app() {
 }
 
 start() {
+	[ $(uci get sysmonitor.sysmonitor.vpn) != "Passwall" ] && exit
+	uci set sysmonitor.sysmonitor.dns="SmartDNS"
+	uci commit sysmonitor
+	/usr/share/sysmonitor/sysapp.sh setdns
 	ulimit -n 65535
 	start_haproxy
 	start_socks
@@ -1849,7 +1815,6 @@ start() {
 	[ "$ENABLED_DEFAULT_ACL" == 1 ] && source $APP_PATH/helper_${DNS_N}.sh logic_restart
 	start_crontab
 	echolog "运行完成！\n"
-	/usr/share/sysmonitor/sysapp.sh setdns
 }
 
 stop() {
@@ -1863,6 +1828,7 @@ stop() {
 	unset V2RAY_LOCATION_ASSET
 	unset XRAY_LOCATION_ASSET
 	stop_crontab
+	source $APP_PATH/helper_smartdns.sh del
 	source $APP_PATH/helper_dnsmasq.sh del
 	source $APP_PATH/helper_dnsmasq.sh restart no_log=1
 	[ -s "$TMP_PATH/bridge_nf_ipt" ] && sysctl -w net.bridge.bridge-nf-call-iptables=$(cat $TMP_PATH/bridge_nf_ipt) >/dev/null 2>&1
@@ -1937,6 +1903,9 @@ DEFAULT_DNSMASQ_CFGID=$(uci show dhcp.@dnsmasq[0] |  awk -F '.' '{print $2}' | a
 DEFAULT_DNS=$(uci show dhcp.@dnsmasq[0] | grep "\.server=" | awk -F '=' '{print $2}' | sed "s/'//g" | tr ' ' '\n' | grep -v "\/" | head -2 | sed ':label;N;s/\n/,/;b label')
 [ -z "${DEFAULT_DNS}" ] && [ "$(echo $ISP_DNS | tr ' ' '\n' | wc -l)" -le 2 ] && DEFAULT_DNS=$(echo -n $ISP_DNS | tr ' ' '\n' | head -2 | tr '\n' ',')
 LOCAL_DNS="${DEFAULT_DNS:-119.29.29.29,223.5.5.5}"
+DIRECT_DNS=$(config_t_get global direct_dns "auto")
+#Automatic logic is already done by default
+[ "${DIRECT_DNS}" != "auto" ] && LOCAL_DNS=$(echo ${DIRECT_DNS} | sed 's/:/#/g')
 
 DNS_QUERY_STRATEGY="UseIP"
 [ "$FILTER_PROXY_IPV6" = "1" ] && DNS_QUERY_STRATEGY="UseIPv4"
